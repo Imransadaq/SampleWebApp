@@ -1,0 +1,55 @@
+name: Deploy Docker Image to 1q2339099.aexp.com
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_version:
+        description: 'Docker image version'
+        required: true
+        default: 'latest'
+      env_vars:
+        description: 'Environment variables (comma-separated, key=value)'
+        required: false
+        default: ''
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set inputs as environment variables
+      run: |
+        echo "IMAGE_VERSION=${{ github.event.inputs.image_version }}" >> $GITHUB_ENV
+        echo "ENV_VARS=${{ github.event.inputs.env_vars }}" >> $GITHUB_ENV
+
+    - name: Log in to Docker Hub
+      run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+    - name: Build Docker image
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/my-app:${{ env.IMAGE_VERSION }} .
+
+    - name: Push Docker image to Docker Hub
+      run: docker push ${{ secrets.DOCKER_USERNAME }}/my-app:${{ env.IMAGE_VERSION }}
+
+    - name: Deploy to 1q2339099.aexp.com
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: 1q2339099.aexp.com
+        username: ${{ secrets.REMOTE_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          echo "Pulling latest image..."
+          docker pull ${{ secrets.DOCKER_USERNAME }}/my-app:${{ env.IMAGE_VERSION }}
+
+          echo "Stopping and removing old container (if any)..."
+          docker stop my-app || true
+          docker rm my-app || true
+
+          echo "Starting new container..."
+          docker run -d --name my-app \
+          $(echo "${{ env.ENV_VARS }}" | sed 's/,/ --env /g' | sed 's/^/--env /') \
+          ${{ secrets.DOCKER_USERNAME }}/my-app:${{ env.IMAGE_VERSION }}
